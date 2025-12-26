@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Camera, Upload, StopCircle, AlertCircle, Download, CheckCircle } from 'lucide-react';
+import { Camera, Upload, StopCircle, AlertCircle, Download, CheckCircle, Brain, RefreshCw } from 'lucide-react';
 import * as tf from '@tensorflow/tfjs';
 
 const EmotionDetector = () => {
+    // State quản lý
     const [mode, setMode] = useState('upload');
     const [isWebcamActive, setIsWebcamActive] = useState(false);
     const [uploadedImage, setUploadedImage] = useState(null);
@@ -12,109 +13,313 @@ const EmotionDetector = () => {
     const [modelLoading, setModelLoading] = useState(true);
     const [modelError, setModelError] = useState(null);
     const [tfReady, setTfReady] = useState(false);
+    const [loadProgress, setLoadProgress] = useState(0);
+    const [modelDetails, setModelDetails] = useState(null);
 
+    // Refs
     const videoRef = useRef(null);
     const canvasRef = useRef(null);
     const streamRef = useRef(null);
     const detectionIntervalRef = useRef(null);
 
-    // Danh sách cảm xúc (theo thứ tự model FER2013)
-    const EMOTIONS = ['Tức giận', 'Ghê tởm', 'Sợ hãi', 'Hạnh phúc', 'Bình thường', 'Buồn', 'Ngạc nhiên'];
+    // Danh sách cảm xúc (FER2017 - 7 emotions)
+    const EMOTIONS = ['Angry', 'Disgust', 'Fear', 'Happy', 'Sad', 'Surprise', 'Neutral'];
 
+    // Labels tiếng Việt
+    const EMOTION_LABELS = {
+        'Angry': 'Tức giận',
+        'Disgust': 'Ghê tởm',
+        'Fear': 'Sợ hãi',
+        'Happy': 'Hạnh phúc',
+        'Sad': 'Buồn bã',
+        'Surprise': 'Ngạc nhiên',
+        'Neutral': 'Bình thường'
+    };
+
+    // Màu sắc và emoji
     const emotionColors = {
-        'Hạnh phúc': 'bg-yellow-500',
-        'Buồn': 'bg-blue-500',
-        'Tức giận': 'bg-red-500',
-        'Ngạc nhiên': 'bg-purple-500',
-        'Sợ hãi': 'bg-gray-600',
-        'Ghê tởm': 'bg-green-600',
-        'Bình thường': 'bg-gray-400'
+        'Angry': 'bg-red-500',
+        'Disgust': 'bg-green-600',
+        'Fear': 'bg-gray-600',
+        'Happy': 'bg-yellow-500',
+        'Sad': 'bg-blue-500',
+        'Surprise': 'bg-purple-500',
+        'Neutral': 'bg-gray-400'
     };
 
     const emotionEmojis = {
-        'Hạnh phúc': '😊',
-        'Buồn': '😢',
-        'Tức giận': '😠',
-        'Ngạc nhiên': '😲',
-        'Sợ hãi': '😨',
-        'Ghê tởm': '🤢',
-        'Bình thường': '😐'
+        'Angry': '😠',
+        'Disgust': '🤢',
+        'Fear': '😨',
+        'Happy': '😊',
+        'Sad': '😢',
+        'Surprise': '😲',
+        'Neutral': '😐'
     };
 
-    // Load TensorFlow.js và model
+    // Hàm load model với progress tracking
     useEffect(() => {
-        const loadModel = async () => {
+        const loadModelWithProgress = async () => {
             try {
-                setModelLoading(true);
+                console.log('🚀 Đang khởi tạo TensorFlow.js...');
 
-                // Kiểm tra TensorFlow.js đã sẵn sàng
+                // Kiểm tra và đợi TensorFlow.js sẵn sàng
                 await tf.ready();
                 setTfReady(true);
-                console.log('✅ TensorFlow.js ready');
-                console.log('Backend:', tf.getBackend());
+                console.log('✅ TensorFlow.js đã sẵn sàng');
+                console.log('Backend hiện tại:', tf.getBackend());
 
-                // ⚠️ QUAN TRỌNG: Thay URL này bằng URL model của bạn
-                // Các tùy chọn host model:
-                // 1. GitHub Pages: https://yourusername.github.io/your-repo/tfjs_model/model.json
-                // 2. Firebase Storage: https://firebasestorage.googleapis.com/...
-                // 3. Vercel/Netlify: https://your-domain.vercel.app/tfjs_model/model.json
+                // Các URL thử load model
+                const modelPaths = [
+                    // Cách 1: Dùng path tương đối từ public folder
+                    '/tfjs_model/model.json',
 
-                const MODEL_URL = './tfjs_model/model.json'; // Local (sau khi copy vào public/)
-                // const MODEL_URL = 'https://yourusername.github.io/emotion-model/model.json'; // GitHub
+                    // Cách 2: Dùng process.env.PUBLIC_URL cho React
+                    process.env.PUBLIC_URL + '/tfjs_model/model.json',
 
-                // Uncomment 3 dòng dưới khi đã có model
-                /*
-                const loadedModel = await tf.loadLayersModel(MODEL_URL);
-                setModel(loadedModel);
-                console.log('✅ Model loaded successfully');
-                */
+                    // Cách 3: Dùng đường dẫn trực tiếp
+                    './tfjs_model/model.json',
 
-                // Hiện tại dùng demo
-                console.log('⚠️ Đang dùng mode demo. Vui lòng uncomment code load model khi đã có model.');
-                setModelError('Chưa có model thực. Đang dùng demo với dữ liệu ngẫu nhiên.');
+                    // Cách 4: Nếu deploy lên GitHub Pages
+                    window.location.origin + '/tfjs_model/model.json'
+                ];
 
-                setModelLoading(false);
+                let loadedModel = null;
+                let lastError = null;
+
+                // Thử load từng path
+                for (const modelPath of modelPaths) {
+                    try {
+                        console.log(`🔄 Đang thử load model từ: ${modelPath}`);
+
+                        // Custom fetch với progress tracking
+                        const progressCallback = (fraction) => {
+                            const progress = Math.round(fraction * 100);
+                            setLoadProgress(progress);
+                            console.log(`📊 Load progress: ${progress}%`);
+                        };
+
+                        // Load model với custom callback
+                        loadedModel = await tf.loadLayersModel(modelPath, {
+                            onProgress: progressCallback
+                        });
+
+                        // Kiểm tra model hợp lệ
+                        if (loadedModel) {
+                            console.log(`✅ Model loaded thành công từ: ${modelPath}`);
+
+                            // Lấy thông tin model
+                            const inputs = loadedModel.inputs;
+                            const outputs = loadedModel.outputs;
+
+                            setModelDetails({
+                                inputShape: inputs[0]?.shape,
+                                outputShape: outputs[0]?.shape,
+                                layers: loadedModel.layers.length,
+                                trainableParams: loadedModel.countParams(),
+                                path: modelPath
+                            });
+
+                            // In summary ra console
+                            console.log('📊 Model Summary:');
+                            loadedModel.summary();
+                            console.log('📐 Input shape:', inputs[0]?.shape);
+                            console.log('📈 Output shape:', outputs[0]?.shape);
+                            console.log('🏗️ Số layers:', loadedModel.layers.length);
+                            console.log('🔢 Số params:', loadedModel.countParams());
+
+                            setModel(loadedModel);
+                            setModelError(null);
+                            setModelLoading(false);
+
+                            return; // Thoát nếu load thành công
+                        }
+                    } catch (err) {
+                        lastError = err;
+                        console.warn(`❌ Không load được từ ${modelPath}:`, err.message);
+                        continue;
+                    }
+                }
+
+                // Nếu tất cả đều thất bại
+                if (!loadedModel) {
+                    throw new Error(`Không thể load model từ bất kỳ đường dẫn nào. Lỗi cuối: ${lastError?.message}`);
+                }
 
             } catch (error) {
-                console.error('❌ Error loading model:', error);
-                setModelError(`Lỗi: ${error.message}`);
+                console.error('❌ Lỗi load model:', error);
+
+                // Tạo error message chi tiết
+                const errorDetails = `
+Lỗi load model: ${error.message}
+
+Nguyên nhân có thể:
+1. File model.json không tồn tại
+2. Các file .bin không đúng vị trí
+3. Model không tương thích với phiên bản TensorFlow.js
+
+Cấu trúc thư mục mong đợi:
+public/
+  └── tfjs_model/
+       ├── model.json
+       ├── group1-shard1of7.bin
+       ├── group1-shard2of7.bin
+       └── ... (7 file shard)
+
+Vui lòng kiểm tra:
+- File model.json có tồn tại trong public/tfjs_model/
+- Tất cả 7 file .bin có trong cùng thư mục
+- Không có lỗi chính tả trong tên file
+                `.trim();
+
+                setModelError(errorDetails);
                 setModelLoading(false);
-                setTfReady(true);
+
+                // Tạo model demo để app vẫn chạy được
+                createDemoModel();
             }
         };
 
-        loadModel();
+        loadModelWithProgress();
 
         return () => {
+            // Cleanup
+            stopWebcam();
             if (model) {
                 model.dispose();
             }
         };
     }, []);
 
-    // Tiền xử lý ảnh cho model
+    // Tạo model demo cho testing
+    const createDemoModel = async () => {
+        console.log('🔧 Đang tạo model demo...');
+
+        try {
+            const demoModel = tf.sequential();
+
+            // Input layer với shape 48x48 grayscale (FER2013 standard)
+            demoModel.add(tf.layers.inputLayer({
+                inputShape: [48, 48, 1],
+                name: 'demo_input'
+            }));
+
+            // Conv layers
+            demoModel.add(tf.layers.conv2d({
+                filters: 32,
+                kernelSize: 3,
+                activation: 'relu',
+                padding: 'same',
+                name: 'demo_conv1'
+            }));
+            demoModel.add(tf.layers.maxPooling2d({
+                poolSize: 2,
+                name: 'demo_pool1'
+            }));
+
+            demoModel.add(tf.layers.conv2d({
+                filters: 64,
+                kernelSize: 3,
+                activation: 'relu',
+                padding: 'same',
+                name: 'demo_conv2'
+            }));
+            demoModel.add(tf.layers.maxPooling2d({
+                poolSize: 2,
+                name: 'demo_pool2'
+            }));
+
+            demoModel.add(tf.layers.flatten({ name: 'demo_flatten' }));
+            demoModel.add(tf.layers.dense({
+                units: 128,
+                activation: 'relu',
+                name: 'demo_dense1'
+            }));
+            demoModel.add(tf.layers.dropout({ rate: 0.5 }));
+
+            // Output layer - 7 emotions
+            demoModel.add(tf.layers.dense({
+                units: 7,
+                activation: 'softmax',
+                name: 'demo_output'
+            }));
+
+            // Compile model
+            demoModel.compile({
+                optimizer: tf.train.adam(0.001),
+                loss: 'categoricalCrossentropy',
+                metrics: ['accuracy']
+            });
+
+            console.log('✅ Model demo đã được tạo');
+            demoModel.summary();
+
+            setModel(demoModel);
+            setModelDetails({
+                inputShape: [null, 48, 48, 1],
+                outputShape: [null, 7],
+                layers: demoModel.layers.length,
+                trainableParams: demoModel.countParams(),
+                path: 'Demo Model'
+            });
+
+        } catch (demoError) {
+            console.error('❌ Lỗi tạo model demo:', demoError);
+        }
+    };
+
+    // Reload model
+    const reloadModel = async () => {
+        setModelLoading(true);
+        setLoadProgress(0);
+        setModelError(null);
+
+        if (model) {
+            model.dispose();
+            setModel(null);
+        }
+
+        // Đợi một chút để cleanup
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        // Load lại model
+        await loadModelWithProgress();
+    };
+
+    // Tiền xử lý ảnh
     const preprocessImage = (imageElement) => {
         return tf.tidy(() => {
-            // Chuyển ảnh sang tensor
-            let tensor = tf.browser.fromPixels(imageElement, 1); // 1 = grayscale
+            // Chuyển sang tensor
+            let tensor = tf.browser.fromPixels(imageElement);
 
-            // Resize về 48x48 (kích thước model FER2013)
+            // Chuyển sang grayscale (nếu cần)
+            if (tensor.shape[2] === 3) {
+                // Cách 1: Lấy kênh green (thường tốt cho face detection)
+                // tensor = tensor.slice([0, 0, 1], [-1, -1, 1]);
+
+                // Cách 2: Convert sang grayscale bằng average
+                tensor = tensor.mean(2).expandDims(2);
+            }
+
+            // Resize về 48x48 (FER2013 standard)
             tensor = tf.image.resizeBilinear(tensor, [48, 48]);
 
-            // Chuẩn hóa [0, 255] -> [0, 1]
+            // Chuẩn hóa pixel values [0, 255] -> [0, 1]
             tensor = tensor.div(255.0);
 
             // Thêm batch dimension [1, 48, 48, 1]
             tensor = tensor.expandDims(0);
 
+            console.log('🔧 Tensor shape sau preprocess:', tensor.shape);
+
             return tensor;
         });
     };
 
-    // Phân tích cảm xúc với model thực
-    const analyzeEmotionReal = async (imageElement) => {
+    // Phân tích cảm xúc
+    const analyzeEmotion = async (imageElement) => {
         if (!model) {
-            console.warn('Model chưa được load, dùng demo');
+            console.warn('⚠️ Model chưa được load, dùng demo data');
             return analyzeEmotionDemo();
         }
 
@@ -124,15 +329,41 @@ const EmotionDetector = () => {
             // Tiền xử lý ảnh
             const tensor = preprocessImage(imageElement);
 
-            // Dự đoán
-            const predictions = model.predict(tensor);
-            const probabilities = await predictions.data();
+            console.log('🧠 Đang dự đoán...');
+            console.log('📊 Input tensor shape:', tensor.shape);
 
-            // Chuyển thành object với tên cảm xúc
+            if (modelDetails?.inputShape) {
+                console.log('🎯 Model expects shape:', modelDetails.inputShape);
+            }
+
+            // Dự đoán
+            const startTime = performance.now();
+            const prediction = model.predict(tensor);
+            const endTime = performance.now();
+
+            console.log(`⏱️ Inference time: ${(endTime - startTime).toFixed(2)}ms`);
+
+            const probabilities = await prediction.data();
+            console.log('📈 Raw predictions:', Array.from(probabilities));
+
+            // Tạo kết quả
             const results = {};
+            let total = 0;
+
             EMOTIONS.forEach((emotion, index) => {
-                results[emotion] = Math.round(probabilities[index] * 100);
+                const prob = probabilities[index] || 0;
+                const percentage = Math.round(prob * 100);
+                results[emotion] = percentage;
+                total += percentage;
             });
+
+            // Đảm bảo tổng là 100%
+            if (total !== 100 && total > 0) {
+                const scale = 100 / total;
+                EMOTIONS.forEach(emotion => {
+                    results[emotion] = Math.round(results[emotion] * scale);
+                });
+            }
 
             // Sắp xếp giảm dần
             const sortedResults = Object.entries(results)
@@ -143,38 +374,34 @@ const EmotionDetector = () => {
 
             // Cleanup tensors
             tensor.dispose();
-            predictions.dispose();
-
-            console.log('Predictions:', sortedResults);
+            prediction.dispose();
 
         } catch (error) {
-            console.error('Error during prediction:', error);
-            analyzeEmotionDemo();
+            console.error('❌ Lỗi phân tích:', error);
+            // Fallback to demo
+            await analyzeEmotionDemo();
         } finally {
             setAnalyzing(false);
         }
     };
 
-    // Demo với dữ liệu ngẫu nhiên
+    // Demo mode với dữ liệu ngẫu nhiên
     const analyzeEmotionDemo = async () => {
         setAnalyzing(true);
 
-        await new Promise(resolve => setTimeout(resolve, 1200));
+        // Giả lập thời gian xử lý
+        await new Promise(resolve => setTimeout(resolve, 1000));
 
+        // Tạo kết quả ngẫu nhiên
         const results = {};
-        let remaining = 100;
+        const randomValues = EMOTIONS.map(() => Math.random());
+        const sum = randomValues.reduce((a, b) => a + b, 0);
 
-        // Tạo phân phối ngẫu nhiên
         EMOTIONS.forEach((emotion, index) => {
-            if (index === EMOTIONS.length - 1) {
-                results[emotion] = Math.max(0, remaining);
-            } else {
-                const value = Math.floor(Math.random() * (remaining / 2));
-                results[emotion] = value;
-                remaining -= value;
-            }
+            results[emotion] = Math.round((randomValues[index] / sum) * 100);
         });
 
+        // Sắp xếp
         const sortedResults = Object.entries(results)
             .sort(([, a], [, b]) => b - a)
             .reduce((acc, [key, value]) => ({ ...acc, [key]: value }), {});
@@ -184,365 +411,471 @@ const EmotionDetector = () => {
     };
 
     // Upload ảnh
-    const handleImageUpload = async (e) => {
+    const handleImageUpload = (e) => {
         const file = e.target.files[0];
         if (!file) return;
 
-        const reader = new FileReader();
-        reader.onload = async (event) => {
-            setUploadedImage(event.target.result);
+        const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+        if (!validTypes.includes(file.type)) {
+            alert('Vui lòng chọn ảnh định dạng JPG, PNG hoặc WebP');
+            return;
+        }
 
-            // Tạo image element
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const imageUrl = event.target.result;
+            setUploadedImage(imageUrl);
+            setEmotions(null);
+
             const img = new Image();
-            img.onload = async () => {
-                if (model) {
-                    await analyzeEmotionReal(img);
-                } else {
-                    await analyzeEmotionDemo();
-                }
+            img.onload = () => {
+                analyzeEmotion(img);
             };
-            img.src = event.target.result;
+            img.src = imageUrl;
         };
         reader.readAsDataURL(file);
     };
 
-    // Khởi động webcam
+    // Webcam functions
     const startWebcam = async () => {
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({
+            const constraints = {
                 video: {
-                    width: 640,
-                    height: 480,
+                    width: { ideal: 640 },
+                    height: { ideal: 480 },
                     facingMode: 'user'
-                }
-            });
+                },
+                audio: false
+            };
 
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
             streamRef.current = stream;
 
             if (videoRef.current) {
                 videoRef.current.srcObject = stream;
+                await videoRef.current.play();
                 setIsWebcamActive(true);
 
-                // Phát hiện mỗi 2 giây
+                // Phân tích mỗi 2 giây
                 detectionIntervalRef.current = setInterval(() => {
-                    captureAndAnalyze();
+                    if (videoRef.current?.readyState === 4) {
+                        captureAndAnalyze();
+                    }
                 }, 2000);
             }
         } catch (err) {
-            console.error('Webcam error:', err);
-            alert('Không thể truy cập webcam. Vui lòng kiểm tra quyền truy cập trong trình duyệt.');
+            console.error('❌ Lỗi webcam:', err);
+            alert('Không thể truy cập webcam. Vui lòng kiểm tra quyền truy cập.');
         }
     };
 
-    // Capture từ webcam và phân tích
-    const captureAndAnalyze = async () => {
+    const captureAndAnalyze = () => {
         if (!videoRef.current || !canvasRef.current) return;
 
-        const canvas = canvasRef.current;
         const video = videoRef.current;
-
-        if (video.readyState !== video.HAVE_ENOUGH_DATA) return;
-
+        const canvas = canvasRef.current;
         const ctx = canvas.getContext('2d');
+
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
 
+        // Mirror video for natural feel
+        ctx.translate(canvas.width, 0);
+        ctx.scale(-1, 1);
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        if (model) {
-            await analyzeEmotionReal(canvas);
-        } else {
-            await analyzeEmotionDemo();
-        }
+        // Reset transform
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+        analyzeEmotion(canvas);
     };
 
-    // Dừng webcam
     const stopWebcam = () => {
-        if (streamRef.current) {
-            streamRef.current.getTracks().forEach(track => track.stop());
-            streamRef.current = null;
-        }
         if (detectionIntervalRef.current) {
             clearInterval(detectionIntervalRef.current);
             detectionIntervalRef.current = null;
         }
+
+        if (streamRef.current) {
+            streamRef.current.getTracks().forEach(track => track.stop());
+            streamRef.current = null;
+        }
+
+        if (videoRef.current) {
+            videoRef.current.srcObject = null;
+        }
+
         setIsWebcamActive(false);
         setEmotions(null);
     };
-
-    // Cleanup
-    useEffect(() => {
-        return () => {
-            stopWebcam();
-        };
-    }, []);
 
     // Render kết quả
     const renderEmotionResults = () => {
         if (!emotions) return null;
 
-        const topEmotion = Object.entries(emotions)[0];
-        const emoji = emotionEmojis[topEmotion[0]];
+        const topEmotion = Object.keys(emotions)[0];
+        const topLabel = EMOTION_LABELS[topEmotion];
+        const topEmoji = emotionEmojis[topEmotion];
+        const topValue = emotions[topEmotion];
 
         return (
-            <div className="mt-6 bg-white rounded-lg shadow-lg p-6 animate-fadeIn">
-                <div className="text-center mb-6">
-                    <div className="text-7xl mb-3">{emoji}</div>
-                    <h3 className="text-2xl font-bold text-gray-800">Cảm xúc chính</h3>
-                    <p className="text-5xl font-bold text-purple-600 mt-2">{topEmotion[0]}</p>
-                    <p className="text-2xl text-gray-600 mt-1">{topEmotion[1]}%</p>
-                </div>
+            <div className="mt-8 p-6 bg-white rounded-xl shadow-lg animate-fadeIn">
+                <div className="flex flex-col md:flex-row items-center gap-8">
+                    <div className="flex-1 text-center">
+                        <div className="text-6xl mb-4">{topEmoji}</div>
+                        <h3 className="text-2xl font-bold text-gray-700 mb-2">Cảm xúc chủ đạo</h3>
+                        <div className="text-4xl font-bold text-purple-600 mb-2">{topLabel}</div>
+                        <div className="text-2xl text-gray-600">{topValue}%</div>
+                    </div>
 
-                <div className="space-y-3">
-                    {Object.entries(emotions).map(([emotion, value]) => (
-                        <div key={emotion} className="transform transition-all hover:scale-105">
-                            <div className="flex justify-between text-sm mb-1">
-                                <span className="font-medium text-gray-700 flex items-center gap-2">
-                                    <span>{emotionEmojis[emotion]}</span>
-                                    <span>{emotion}</span>
-                                </span>
-                                <span className="text-gray-600 font-semibold">{value}%</span>
-                            </div>
-                            <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
-                                <div
-                                    className={`h-3 rounded-full transition-all duration-1000 ease-out ${emotionColors[emotion]}`}
-                                    style={{ width: `${value}%` }}
-                                />
-                            </div>
+                    <div className="flex-1 w-full">
+                        <h4 className="text-lg font-semibold text-gray-700 mb-4">Chi tiết cảm xúc</h4>
+                        <div className="space-y-4">
+                            {Object.entries(emotions).map(([emotion, value]) => (
+                                <div key={emotion} className="space-y-2">
+                                    <div className="flex justify-between items-center">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-xl">{emotionEmojis[emotion]}</span>
+                                            <span className="font-medium text-gray-700">
+                                                {EMOTION_LABELS[emotion]}
+                                            </span>
+                                        </div>
+                                        <span className="font-semibold text-gray-800">{value}%</span>
+                                    </div>
+                                    <div className="h-3 bg-gray-200 rounded-full overflow-hidden">
+                                        <div
+                                            className={`h-full rounded-full transition-all duration-1000 ${emotionColors[emotion]}`}
+                                            style={{ width: `${value}%` }}
+                                        />
+                                    </div>
+                                </div>
+                            ))}
                         </div>
-                    ))}
+                    </div>
                 </div>
             </div>
         );
     };
 
+    // Render model info
+    const renderModelInfo = () => {
+        if (!modelDetails) return null;
+
+        return (
+            <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                <h4 className="font-semibold text-gray-700 mb-2">📊 Thông tin Model</h4>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                    <div>
+                        <div className="text-gray-500">Input Shape</div>
+                        <div className="font-mono">{JSON.stringify(modelDetails.inputShape)}</div>
+                    </div>
+                    <div>
+                        <div className="text-gray-500">Output Shape</div>
+                        <div className="font-mono">{JSON.stringify(modelDetails.outputShape)}</div>
+                    </div>
+                    <div>
+                        <div className="text-gray-500">Layers</div>
+                        <div className="font-mono">{modelDetails.layers}</div>
+                    </div>
+                    <div>
+                        <div className="text-gray-500">Parameters</div>
+                        <div className="font-mono">{modelDetails.trainableParams.toLocaleString()}</div>
+                    </div>
+                </div>
+                {modelDetails.path && (
+                    <div className="mt-2 text-xs text-gray-500">
+                        Path: <code className="bg-gray-100 px-2 py-1 rounded">{modelDetails.path}</code>
+                    </div>
+                )}
+            </div>
+        );
+    };
+
     return (
-        <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50 p-4 md:p-6">
-            <div className="max-w-4xl mx-auto">
+        <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50 p-4 md:p-8">
+            <div className="max-w-6xl mx-auto">
                 {/* Header */}
-                <div className="text-center mb-8">
-                    <h1 className="text-4xl md:text-5xl font-bold text-gray-800 mb-3">
-                        🤖 AI Nhận diện Cảm xúc
+                <header className="text-center mb-10">
+                    <h1 className="text-4xl md:text-5xl font-bold text-gray-800 mb-4">
+                        🧠 AI Nhận Diện Cảm Xúc
                     </h1>
-                    <p className="text-gray-600 text-lg">
-                        Sử dụng Deep Learning với TensorFlow.js
+                    <p className="text-lg text-gray-600 max-w-2xl mx-auto">
+                        Phân tích cảm xúc sử dụng TensorFlow.js với model được phân thành 7 shard files
                     </p>
 
                     {/* Status indicators */}
-                    <div className="mt-4 flex flex-wrap gap-3 justify-center">
-                        {tfReady && (
-                            <div className="inline-flex items-center gap-2 bg-green-100 text-green-700 px-4 py-2 rounded-full text-sm">
-                                <CheckCircle className="w-4 h-4" />
-                                <span>TensorFlow.js Ready</span>
-                            </div>
-                        )}
+                    <div className="flex flex-wrap gap-3 justify-center mt-6">
+                        <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm ${tfReady ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                            <Brain className="w-4 h-4" />
+                            <span>TensorFlow.js {tfReady ? '✅' : '⏳'}</span>
+                        </div>
+
+                        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm bg-blue-100 text-blue-700">
+                            <span>Backend: {tf.getBackend()}</span>
+                        </div>
 
                         {modelLoading && (
-                            <div className="inline-flex items-center gap-2 bg-blue-100 text-blue-700 px-4 py-2 rounded-full text-sm">
-                                <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-700 border-t-transparent"></div>
-                                <span>Đang tải model...</span>
-                            </div>
-                        )}
-
-                        {modelError && !modelLoading && (
-                            <div className="inline-flex items-center gap-2 bg-yellow-100 text-yellow-800 px-4 py-2 rounded-full text-sm max-w-md">
-                                <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                                <span className="text-left">{modelError}</span>
+                            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm bg-purple-100 text-purple-700">
+                                <RefreshCw className="w-4 h-4 animate-spin" />
+                                <span>Đang tải model... {loadProgress}%</span>
                             </div>
                         )}
 
                         {model && !modelLoading && (
-                            <div className="inline-flex items-center gap-2 bg-green-100 text-green-700 px-4 py-2 rounded-full text-sm">
+                            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm bg-green-100 text-green-700">
                                 <CheckCircle className="w-4 h-4" />
-                                <span>Model đã load</span>
+                                <span>Model đã sẵn sàng</span>
                             </div>
                         )}
                     </div>
-                </div>
-
-                {/* Mode selector */}
-                <div className="flex gap-3 md:gap-4 mb-6 justify-center">
-                    <button
-                        onClick={() => {
-                            setMode('upload');
-                            stopWebcam();
-                            setUploadedImage(null);
-                            setEmotions(null);
-                        }}
-                        className={`flex items-center gap-2 px-4 md:px-6 py-3 rounded-lg font-semibold transition-all ${mode === 'upload'
-                            ? 'bg-purple-600 text-white shadow-lg scale-105'
-                            : 'bg-white text-gray-700 hover:bg-gray-100'
-                            }`}
-                    >
-                        <Upload className="w-5 h-5" />
-                        <span className="hidden sm:inline">Upload Ảnh</span>
-                        <span className="sm:hidden">Upload</span>
-                    </button>
-                    <button
-                        onClick={() => {
-                            setMode('webcam');
-                            setUploadedImage(null);
-                            setEmotions(null);
-                        }}
-                        className={`flex items-center gap-2 px-4 md:px-6 py-3 rounded-lg font-semibold transition-all ${mode === 'webcam'
-                            ? 'bg-purple-600 text-white shadow-lg scale-105'
-                            : 'bg-white text-gray-700 hover:bg-gray-100'
-                            }`}
-                    >
-                        <Camera className="w-5 h-5" />
-                        <span>Webcam</span>
-                    </button>
-                </div>
+                </header>
 
                 {/* Main content */}
-                <div className="bg-white rounded-xl shadow-2xl p-4 md:p-6">
-                    {/* Upload Mode */}
-                    {mode === 'upload' && (
-                        <div>
-                            <div className="border-4 border-dashed border-gray-300 rounded-lg p-8 md:p-12 text-center hover:border-purple-500 transition-all cursor-pointer">
-                                <input
-                                    type="file"
-                                    accept="image/*"
-                                    onChange={handleImageUpload}
-                                    className="hidden"
-                                    id="imageUpload"
-                                />
-                                <label htmlFor="imageUpload" className="cursor-pointer">
-                                    <Upload className="w-12 h-12 md:w-16 md:h-16 mx-auto mb-4 text-gray-400" />
-                                    <p className="text-lg md:text-xl font-semibold text-gray-700">
-                                        Click để chọn ảnh
-                                    </p>
-                                    <p className="text-sm text-gray-500 mt-2">
-                                        Hỗ trợ JPG, PNG, JPEG
-                                    </p>
-                                </label>
-                            </div>
-
-                            {uploadedImage && (
-                                <div className="mt-6">
-                                    <img
-                                        src={uploadedImage}
-                                        alt="Uploaded"
-                                        className="max-w-full h-auto rounded-lg mx-auto shadow-lg"
-                                        style={{ maxHeight: '500px' }}
-                                    />
+                <main className="space-y-8">
+                    {/* Model loading progress */}
+                    {modelLoading && (
+                        <div className="bg-white rounded-xl shadow-lg p-6">
+                            <div className="flex items-center gap-4 mb-4">
+                                <RefreshCw className="w-6 h-6 animate-spin text-purple-600" />
+                                <div className="flex-1">
+                                    <h3 className="font-semibold text-gray-700">Đang tải model...</h3>
+                                    <p className="text-sm text-gray-500">Đang load 7 shard files từ thư mục public/tfjs_model/</p>
                                 </div>
-                            )}
+                                <div className="text-lg font-bold text-purple-600">{loadProgress}%</div>
+                            </div>
+                            <div className="w-full bg-gray-200 rounded-full h-3">
+                                <div
+                                    className="bg-gradient-to-r from-purple-500 to-pink-500 h-3 rounded-full transition-all duration-300"
+                                    style={{ width: `${loadProgress}%` }}
+                                />
+                            </div>
+                            <div className="mt-4 grid grid-cols-7 gap-2">
+                                {Array.from({ length: 7 }).map((_, i) => (
+                                    <div
+                                        key={i}
+                                        className={`h-2 rounded ${loadProgress >= (i + 1) * 14 ? 'bg-green-500' : 'bg-gray-300'}`}
+                                    />
+                                ))}
+                            </div>
                         </div>
                     )}
 
-                    {/* Webcam Mode */}
-                    {mode === 'webcam' && (
-                        <div>
-                            <div className="relative">
-                                <video
-                                    ref={videoRef}
-                                    autoPlay
-                                    playsInline
-                                    muted
-                                    className="w-full rounded-lg shadow-lg"
-                                    style={{ display: isWebcamActive ? 'block' : 'none' }}
-                                />
-                                <canvas ref={canvasRef} className="hidden" />
+                    {/* Model error display */}
+                    {modelError && (
+                        <div className="bg-gradient-to-r from-red-50 to-orange-50 border-l-4 border-red-500 rounded-r-lg p-6">
+                            <div className="flex items-start gap-3">
+                                <AlertCircle className="w-6 h-6 text-red-500 flex-shrink-0" />
+                                <div className="flex-1">
+                                    <h3 className="font-bold text-red-700 text-lg mb-2">⚠️ Lỗi load model</h3>
+                                    <div className="bg-red-100 border border-red-200 rounded-lg p-4 mb-4">
+                                        <pre className="text-sm text-red-800 whitespace-pre-wrap overflow-x-auto">
+                                            {modelError}
+                                        </pre>
+                                    </div>
+                                    <div className="flex gap-3">
+                                        <button
+                                            onClick={reloadModel}
+                                            className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-all flex items-center gap-2"
+                                        >
+                                            <RefreshCw className="w-4 h-4" />
+                                            Thử lại
+                                        </button>
+                                        <button
+                                            onClick={createDemoModel}
+                                            className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-all"
+                                        >
+                                            Dùng model demo
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
-                                {!isWebcamActive && (
-                                    <div className="border-4 border-dashed border-gray-300 rounded-lg p-8 md:p-12 text-center">
-                                        <Camera className="w-12 h-12 md:w-16 md:h-16 mx-auto mb-4 text-gray-400" />
-                                        <p className="text-lg md:text-xl font-semibold text-gray-700 mb-2">
-                                            Webcam chưa được bật
+                    {/* Model info */}
+                    {model && renderModelInfo()}
+
+                    {/* Mode selector */}
+                    <div className="flex gap-4 justify-center">
+                        <button
+                            onClick={() => {
+                                if (mode === 'webcam' && isWebcamActive) stopWebcam();
+                                setMode('upload');
+                                setUploadedImage(null);
+                                setEmotions(null);
+                            }}
+                            className={`flex items-center gap-3 px-6 py-4 rounded-xl font-semibold transition-all ${mode === 'upload'
+                                ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-lg scale-105'
+                                : 'bg-white text-gray-700 hover:bg-gray-50 shadow-md'
+                                }`}
+                        >
+                            <Upload className="w-6 h-6" />
+                            <span>Tải ảnh lên</span>
+                        </button>
+
+                        <button
+                            onClick={() => {
+                                setMode('webcam');
+                                setUploadedImage(null);
+                                setEmotions(null);
+                            }}
+                            className={`flex items-center gap-3 px-6 py-4 rounded-xl font-semibold transition-all ${mode === 'webcam'
+                                ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-lg scale-105'
+                                : 'bg-white text-gray-700 hover:bg-gray-50 shadow-md'
+                                }`}
+                        >
+                            <Camera className="w-6 h-6" />
+                            <span>Sử dụng Webcam</span>
+                        </button>
+                    </div>
+
+                    {/* Content area */}
+                    <div className="bg-white rounded-2xl shadow-xl p-6 md:p-8">
+                        {/* Upload mode */}
+                        {mode === 'upload' && (
+                            <div className="space-y-6">
+                                <div className="border-3 border-dashed border-gray-300 rounded-xl p-8 md:p-12 text-center hover:border-purple-400 transition-colors cursor-pointer bg-gray-50">
+                                    <input
+                                        type="file"
+                                        accept="image/*"
+                                        onChange={handleImageUpload}
+                                        className="hidden"
+                                        id="imageUpload"
+                                    />
+                                    <label htmlFor="imageUpload" className="cursor-pointer flex flex-col items-center">
+                                        <Upload className="w-16 h-16 md:w-20 md:h-20 text-gray-400 mb-6" />
+                                        <p className="text-xl md:text-2xl font-semibold text-gray-700 mb-2">
+                                            Chọn ảnh để phân tích
                                         </p>
-                                        <p className="text-sm text-gray-500">
-                                            Click nút bên dưới để bắt đầu
-                                        </p>
+                                        <p className="text-gray-500">JPG, PNG, WebP</p>
+                                    </label>
+                                </div>
+
+                                {uploadedImage && (
+                                    <div className="mt-6">
+                                        <h3 className="text-xl font-semibold text-gray-700 mb-4">Ảnh đã tải lên</h3>
+                                        <img
+                                            src={uploadedImage}
+                                            alt="Uploaded"
+                                            className="max-w-full h-auto rounded-lg shadow-lg mx-auto max-h-96"
+                                        />
                                     </div>
                                 )}
                             </div>
+                        )}
 
-                            <div className="mt-4 text-center">
-                                {!isWebcamActive ? (
-                                    <button
-                                        onClick={startWebcam}
-                                        className="bg-green-600 text-white px-6 md:px-8 py-3 rounded-lg font-semibold hover:bg-green-700 transition-all shadow-lg hover:shadow-xl flex items-center gap-2 mx-auto"
-                                    >
-                                        <Camera className="w-5 h-5" />
-                                        Bật Webcam
-                                    </button>
-                                ) : (
-                                    <button
-                                        onClick={stopWebcam}
-                                        className="bg-red-600 text-white px-6 md:px-8 py-3 rounded-lg font-semibold hover:bg-red-700 transition-all shadow-lg hover:shadow-xl flex items-center gap-2 mx-auto"
-                                    >
-                                        <StopCircle className="w-5 h-5" />
-                                        Dừng Webcam
-                                    </button>
-                                )}
+                        {/* Webcam mode */}
+                        {mode === 'webcam' && (
+                            <div className="space-y-6">
+                                <div className="relative bg-gray-900 rounded-xl overflow-hidden">
+                                    <video
+                                        ref={videoRef}
+                                        autoPlay
+                                        playsInline
+                                        muted
+                                        className="w-full h-auto"
+                                        style={{ display: isWebcamActive ? 'block' : 'none' }}
+                                    />
+
+                                    {!isWebcamActive && (
+                                        <div className="p-12 text-center">
+                                            <Camera className="w-20 h-20 mx-auto mb-6 text-gray-400" />
+                                            <p className="text-2xl font-semibold text-gray-700 mb-2">
+                                                Webcam chưa được kích hoạt
+                                            </p>
+                                            <p className="text-gray-500">
+                                                Nhấn nút bên dưới để bắt đầu
+                                            </p>
+                                        </div>
+                                    )}
+
+                                    <canvas ref={canvasRef} className="hidden" />
+                                </div>
+
+                                <div className="flex justify-center gap-4">
+                                    {!isWebcamActive ? (
+                                        <button
+                                            onClick={startWebcam}
+                                            disabled={!model}
+                                            className="px-8 py-3 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-lg font-semibold hover:shadow-lg transition-all flex items-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                            <Camera className="w-6 h-6" />
+                                            <span>Bật Webcam</span>
+                                        </button>
+                                    ) : (
+                                        <button
+                                            onClick={stopWebcam}
+                                            className="px-8 py-3 bg-gradient-to-r from-red-500 to-pink-600 text-white rounded-lg font-semibold hover:shadow-lg transition-all flex items-center gap-3"
+                                        >
+                                            <StopCircle className="w-6 h-6" />
+                                            <span>Tắt Webcam</span>
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Loading indicator */}
+                        {analyzing && (
+                            <div className="mt-8 text-center">
+                                <div className="inline-flex flex-col items-center gap-4">
+                                    <div className="relative">
+                                        <div className="w-16 h-16 border-4 border-purple-200 rounded-full"></div>
+                                        <div className="absolute top-0 left-0 w-16 h-16 border-4 border-purple-600 rounded-full animate-spin border-t-transparent"></div>
+                                    </div>
+                                    <p className="text-xl font-semibold text-gray-700">Đang phân tích cảm xúc...</p>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Results */}
+                        {!analyzing && renderEmotionResults()}
+                    </div>
+
+                    {/* File structure guide */}
+                    <div className="bg-white rounded-2xl shadow-xl p-6">
+                        <h3 className="text-xl font-bold text-gray-800 mb-4">📁 Cấu trúc thư mục model</h3>
+                        <div className="bg-gray-900 text-gray-100 p-4 rounded-lg font-mono text-sm overflow-x-auto">
+                            <div className="text-green-400">public/</div>
+                            <div className="ml-4">
+                                <div className="text-blue-400">└── tfjs_model/</div>
+                                <div className="ml-8">
+                                    <div className="text-yellow-300">├── model.json</div>
+                                    <div className="text-yellow-300">├── group1-shard1of7.bin</div>
+                                    <div className="text-yellow-300">├── group1-shard2of7.bin</div>
+                                    <div className="text-yellow-300">├── group1-shard3of7.bin</div>
+                                    <div className="text-yellow-300">├── group1-shard4of7.bin</div>
+                                    <div className="text-yellow-300">├── group1-shard5of7.bin</div>
+                                    <div className="text-yellow-300">├── group1-shard6of7.bin</div>
+                                    <div className="text-yellow-300">└── group1-shard7of7.bin</div>
+                                </div>
                             </div>
                         </div>
-                    )}
 
-                    {/* Loading state */}
-                    {analyzing && (
-                        <div className="mt-6 text-center">
-                            <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-purple-600 border-t-transparent"></div>
-                            <p className="mt-3 text-gray-600 font-medium">Đang phân tích cảm xúc...</p>
-                        </div>
-                    )}
+                        <div className="mt-6 grid md:grid-cols-2 gap-6">
+                            <div className="bg-blue-50 p-5 rounded-xl">
+                                <h4 className="font-bold text-blue-700 mb-2">✅ Đã có đúng cấu trúc?</h4>
+                                <ul className="space-y-1 text-gray-600">
+                                    <li>• 1 file model.json</li>
+                                    <li>• 7 file .bin (shard)</li>
+                                    <li>• Tất cả trong public/tfjs_model/</li>
+                                </ul>
+                            </div>
 
-                    {/* Results */}
-                    {!analyzing && renderEmotionResults()}
-                </div>
-
-                {/* Instructions */}
-                <div className="mt-6 bg-white rounded-lg shadow-lg p-4 md:p-6">
-                    <h3 className="font-bold text-lg mb-3 flex items-center gap-2">
-                        <Download className="w-5 h-5 text-purple-600" />
-                        Hướng dẫn tích hợp Model
-                    </h3>
-                    <div className="space-y-3 text-sm text-gray-700">
-                        <div className="bg-blue-50 border-l-4 border-blue-500 p-3 rounded">
-                            <p className="font-semibold mb-1">📝 Bước 1: Huấn luyện Model</p>
-                            <p>Chạy code Python trên Google Colab để train model với dataset FER2013</p>
-                        </div>
-
-                        <div className="bg-green-50 border-l-4 border-green-500 p-3 rounded">
-                            <p className="font-semibold mb-1">📦 Bước 2: Tải Model</p>
-                            <p>Download file <code className="bg-gray-100 px-2 py-1 rounded">tfjs_model.zip</code> từ Colab</p>
-                        </div>
-
-                        <div className="bg-purple-50 border-l-4 border-purple-500 p-3 rounded">
-                            <p className="font-semibold mb-1">🚀 Bước 3: Deploy Model</p>
-                            <p>Upload thư mục model lên GitHub Pages hoặc host riêng</p>
-                        </div>
-
-                        <div className="bg-orange-50 border-l-4 border-orange-500 p-3 rounded">
-                            <p className="font-semibold mb-1">⚙️ Bước 4: Cập nhật Code</p>
-                            <p>Thay <code className="bg-gray-100 px-2 py-1 rounded">MODEL_URL</code> và uncomment code load model</p>
+                            <div className="bg-green-50 p-5 rounded-xl">
+                                <h4 className="font-bold text-green-700 mb-2">🔄 Cách reload model</h4>
+                                <button
+                                    onClick={reloadModel}
+                                    className="w-full px-4 py-3 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-lg font-semibold hover:shadow-lg transition-all flex items-center justify-center gap-2"
+                                >
+                                    <RefreshCw className="w-5 h-5" />
+                                    Reload Model
+                                </button>
+                            </div>
                         </div>
                     </div>
-
-                    <div className="mt-4 text-xs text-gray-500 bg-gray-50 p-3 rounded">
-                        <p className="font-semibold mb-1">💡 Lưu ý:</p>
-                        <p>App hiện đang dùng dữ liệu demo ngẫu nhiên. Sau khi tích hợp model thực, kết quả sẽ chính xác dựa trên Deep Learning.</p>
-                    </div>
-                </div>
+                </main>
             </div>
-
-            <style>{`
-        @keyframes fadeIn {
-          from {
-            opacity: 0;
-            transform: translateY(10px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-        
-        .animate-fadeIn {
-          animation: fadeIn 0.5s ease-out;
-        }
-      `}</style>
         </div>
     );
 };
