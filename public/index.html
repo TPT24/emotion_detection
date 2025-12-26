@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="utf-8" />
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>,<text y='.9em' font-size='90'>🤖</text></svg>" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#9333ea" />
+    <meta name="description"
+        content="Ứng dụng nhận diện cảm xúc sử dụng AI và TensorFlow.js - Upload ảnh hoặc sử dụng webcam để phát hiện cảm xúc" />
+    <meta name="keywords" content="emotion detection, AI, TensorFlow.js, face recognition, nhận diện cảm xúc" />
+    <meta name="author" content="Emotion Detection App" />
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="🤖 AI Nhận diện Cảm xúc" />
+    <meta property="og:description" content="Nhận diện cảm xúc từ khuôn mặt với Deep Learning" />
+
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary_large_image" />
+    <meta property="twitter:title" content="🤖 AI Nhận diện Cảm xúc" />
+
+    <title>🤖 AI Nhận diện Cảm xúc - TensorFlow.js</title>
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Tailwind Config -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#9333ea',
+                        secondary: '#ec4899'
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            overflow-x: hidden;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+                'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+                sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        code {
+            font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+                monospace;
+            background-color: #f3f4f6;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.875em;
+        }
+
+        #root {
+            min-height: 100vh;
+        }
+
+        /* Loading animation */
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* Fade in animation */
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .fade-in {
+            animation: fadeIn 0.5s ease-out;
+        }
+
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 10px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #9333ea;
+            border-radius: 5px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #7c3aed;
+        }
+
+        /* Loading screen */
+        .loading-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+            transition: opacity 0.5s ease-out;
+        }
+
+        .loading-screen.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .loading-spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Loading Screen -->
+    <div id="loading-screen" class="loading-screen">
+        <div class="loading-spinner"></div>
+        <p class="text-white text-xl font-semibold mt-4">Đang tải ứng dụng...</p>
+    </div>
+
+    <!-- No JavaScript Warning -->
+    <noscript>
+        <div style="
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: #f3f4f6;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 10000;
+        padding: 20px;
+      ">
+            <div style="
+          background: white;
+          padding: 40px;
+          border-radius: 12px;
+          box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+          max-width: 500px;
+          text-align: center;
+        ">
+                <h1 style="font-size: 3em; margin-bottom: 20px;">⚠️</h1>
+                <h2 style="font-size: 1.5em; margin-bottom: 10px; color: #1f2937;">
+                    JavaScript bị tắt
+                </h2>
+                <p style="color: #6b7280; line-height: 1.6;">
+                    Bạn cần bật JavaScript trong trình duyệt để sử dụng ứng dụng này.
+                    <br><br>
+                    Ứng dụng sử dụng TensorFlow.js để nhận diện cảm xúc và yêu cầu JavaScript để hoạt động.
+                </p>
+                <div style="margin-top: 20px; padding: 15px; background: #fef3c7; border-radius: 8px;">
+                    <p style="font-size: 0.9em; color: #92400e;">
+                        <strong>Hướng dẫn:</strong> Vào Settings → Privacy & Security → Bật JavaScript
+                    </p>
+                </div>
+            </div>
+        </div>
+    </noscript>
+
+    <!-- Main App Container -->
+    <div id="root"></div>
+
+    <!-- Hide loading screen after React loads -->
+    <script>
+        window.addEventListener('load', function () {
+            setTimeout(function () {
+                const loadingScreen = document.getElementById('loading-screen');
+                if (loadingScreen) {
+                    loadingScreen.classList.add('hidden');
+                    setTimeout(function () {
+                        loadingScreen.remove();
+                    }, 500);
+                }
+            }, 1000);
+        });
+    </script>
+</body>
+
+</html>

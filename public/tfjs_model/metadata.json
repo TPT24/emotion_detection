@@ -1,0 +1,16 @@
+{
+  "emotions": [
+    "angry",
+    "disgust",
+    "fear",
+    "happy",
+    "neutral",
+    "sad",
+    "surprise"
+  ],
+  "img_size": 48,
+  "model_info": {
+    "accuracy": 0.6889105439186096,
+    "loss": 0.8813242316246033
+  }
+}
